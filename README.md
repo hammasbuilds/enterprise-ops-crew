@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hammas159/enterprise-ops-crew/actions/workflows/ci.yml"><img src="https://github.com/hammas159/enterprise-ops-crew/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml"><img src="https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/core%20deps-zero-success" alt="deps">
   <img src="https://img.shields.io/badge/stack-Streamlit%20(optional%20demo)-orange" alt="stack">
@@ -179,7 +179,7 @@ MIT
 ## Run it yourself
 
 ```bash
-git clone https://github.com/hammas159/enterprise-ops-crew
+git clone https://github.com/hammasbuilds/enterprise-ops-crew
 cd enterprise-ops-crew
 
 uv sync --all-groups     # or: pip install -e ".[dev]"
