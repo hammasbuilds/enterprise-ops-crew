@@ -6,8 +6,7 @@
   <a href="#execution-runs-on-playbooks-not-prompts">Playbooks</a> &middot;
   <a href="#slas-run-on-business-hours">SLAs</a> &middot;
   <a href="#the-report-answers-the-question-a-manager-actually-asks">The report</a> &middot;
-  <a href="#limits">Limits</a> &middot;
-  <a href="#problems-hit-while-building-this">Problems hit</a>
+  <a href="#limits">Limits</a> 
 </p>
 
 <p align="center">
@@ -221,38 +220,3 @@ The gate stops the irreversible step, not the whole playbook. A crew that abando
 ticket entirely would also show no money moved, and would be useless.
 
 Same mock ERP/ITSM/HRMS registry the tests use — no model, no network.
-
-## Problems hit while building this
-
-**Every triage rule silently matched nothing.** The word-boundary pattern was written as
-`"\b{}\b"` inside a shell heredoc, which collapsed to a literal **backspace character**
-rather than a regex boundary. The module imported cleanly, the tests compiled, and
-triage returned `unknown` for every ticket ever submitted. *Fixed* with a raw string —
-and there is now a test asserting `"accessory"` does not match the rule for `access`,
-because the boundary is load-bearing in both directions.
-
-**SLA clocks ran on wall time first.** A ticket raised at 5pm Friday with a four-hour
-target was "breached" by 9pm Friday, when the desk had been closed for four hours. That
-produces a dashboard full of breaches nobody caused and nobody could have prevented —
-and a dashboard nobody believes is a dashboard nobody reads. *Fixed* by measuring in
-business hours, with configurable working days and holidays.
-
-**Reporting only the breach boolean was useless.** By the time it flips, the SLA is
-already missed. *Fixed* by reporting `burn` — the fraction of the budget consumed — so
-`at_risk(0.8)` surfaces tickets while somebody can still act on them.
-
-**`fastapi`, `uvicorn`, `pydantic`, `rich` and `typer` were declared as core
-dependencies and imported nowhere** — grepped `src/` and `tests/` for each before
-touching anything, and there was a matching empty `src/crew/api/` folder, scaffolding
-for a service never built. The README title claimed that stack too. *Fixed* by
-removing all five, deleting the folder, and correcting the title: this is pure Python
-with zero core dependencies, and the real gap was the declared-but-unbuilt Streamlit
-demo above.
-
-**Two bugs in the demo, both from assuming the API worked the way it reads.**
-`approve()` already calls `work()` internally and returns a resolved ticket, so
-calling `work()` again after it raised `TransitionError: cannot be worked`. And
-`intake()` escalates a low-confidence ticket *directly*, without ever passing through
-`triaged` — so handing that ticket to `work()` raised the same error. Both only
-surfaced by actually clicking through every sample scenario rather than testing the
-happy path.
