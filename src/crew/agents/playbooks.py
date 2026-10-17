@@ -27,6 +27,10 @@ class Playbook:
     name: str
     category: str
     steps: list[Step]
+    # When set, the playbook never resolves the ticket itself: after its steps it hands
+    # the ticket to a human with this reason. For work a back office can record but not
+    # fix, such as an outage.
+    hand_off: str = ""
 
 
 PLAYBOOKS: dict[str, Playbook] = {
@@ -55,6 +59,9 @@ PLAYBOOKS: dict[str, Playbook] = {
     "incident": Playbook(
         "incident/v1",
         "incident",
-        [Step("itsm_reset_password", {"account": "requester"}, optional=True)],
+        # Log it in ITSM, then hand it to on-call. Nothing a back-office crew can call
+        # fixes an outage, so marking one resolved would be a false report.
+        [Step("itsm_open_incident", {"reporter": "requester"}, optional=True)],
+        hand_off="incident: logged in ITSM and handed to the on-call engineer",
     ),
 }

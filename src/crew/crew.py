@@ -144,6 +144,10 @@ class Crew:
                 ticket.transition(Status.ESCALATED, actor="resolver", reason=str(exc))
                 return ticket
 
+        if playbook.hand_off:
+            ticket.transition(Status.ESCALATED, actor="resolver", reason=playbook.hand_off)
+            return ticket
+
         ticket.transition(
             Status.RESOLVED, actor="resolver", reason=f"playbook {playbook.name} completed"
         )

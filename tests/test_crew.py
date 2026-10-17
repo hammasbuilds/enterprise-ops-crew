@@ -178,18 +178,31 @@ class TestAutonomousWork:
         t = c.intake(ticket("Cannot log in, password reset needed"))
         assert c.work(t.id).status is Status.ESCALATED
 
-    def test_an_optional_step_failing_does_not_escalate(self):
+    def test_an_optional_step_failing_is_skipped_not_escalated_on(self):
         c = crew()
         c.systems.register(
             Operation(
-                "itsm_reset_password",
+                "itsm_open_incident",
                 "itsm",
                 Risk.WRITE,
-                lambda account: (_ for _ in ()).throw(ConnectionError("itsm down")),
+                lambda reporter: (_ for _ in ()).throw(ConnectionError("itsm down")),
             )
         )
         t = c.intake(ticket("Production down, all users affected"))
-        assert c.work(t.id).status is Status.RESOLVED
+        result = c.work(t.id)
+        assert any(e.action == "step_skipped" for e in result.history)
+        # The playbook ran to its end; the escalation is the hand-off, not the failure.
+        assert "on-call" in result.history[-1].detail["reason"]
+        assert "itsm down" not in result.history[-1].detail["reason"]
+
+    def test_an_outage_is_handed_to_a_human_not_marked_resolved(self):
+        """Nothing the crew can call fixes an outage, so it must not report one fixed."""
+        c = crew()
+        t = c.intake(ticket("Production down, all users affected"))
+        result = c.work(t.id)
+        assert result.status is Status.ESCALATED
+        assert [name for name, _ in c.systems.calls] == ["itsm_open_incident"]
+        assert c.daily_report()["autonomous_resolution_rate"] == 0.0
 
     def test_an_unknown_category_escalates(self):
         c = crew()

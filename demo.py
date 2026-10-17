@@ -1,4 +1,5 @@
-"""Four tickets in. Three resolved end to end, one stopped at the approval gate.
+"""Four tickets in. Two resolved end to end, one outage handed to on-call, one stopped at
+the approval gate.
 
     python demo.py
 

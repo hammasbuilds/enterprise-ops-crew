@@ -115,6 +115,15 @@ def build_default_registry(**kw) -> SystemsRegistry:
     )
     reg.register(
         Operation(
+            "itsm_open_incident",
+            "itsm",
+            Risk.WRITE,
+            lambda reporter: {"incident": f"INC-{len(reg.calls):04d}", "reporter": reporter},
+            "Open an incident record",
+        )
+    )
+    reg.register(
+        Operation(
             "itsm_grant_access",
             "itsm",
             Risk.IRREVERSIBLE,

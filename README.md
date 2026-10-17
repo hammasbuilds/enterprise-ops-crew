@@ -1,54 +1,83 @@
-<h1 align="center">enterprise-ops-crew (Python · multi-agent playbooks · approval gates)</h1>
-<p align="center"><i>A back-office crew that resolves tickets across four systems, and stops before it does anything it cannot undo</i></p>
+# enterprise-ops-crew
 
-<p align="center">
-  <a href="#the-three-places-it-can-stop-safely">Where it stops</a> &middot;
-  <a href="#execution-runs-on-playbooks-not-prompts">Playbooks</a> &middot;
-  <a href="#slas-run-on-business-hours">SLAs</a> &middot;
-  <a href="#the-report-answers-the-question-a-manager-actually-asks">The report</a> &middot;
-  <a href="#limits">Limits</a> 
-</p>
+[![ci](https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml/badge.svg)](https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.12-blue)
+![deps](https://img.shields.io/badge/runtime%20deps-zero-success)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p align="center">
-  <a href="https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml"><img src="https://github.com/hammasbuilds/enterprise-ops-crew/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
-  <img src="https://img.shields.io/badge/core%20deps-zero-success" alt="deps">
-  <img src="https://img.shields.io/badge/stack-Streamlit%20(optional%20demo)-orange" alt="stack">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
-</p>
+We built enterprise-ops-crew, a multi-agent back office that resolves tickets across four
+enterprise systems (HRMS, ITSM, CRM, ERP) and stops before anything it cannot undo. The agents
+are distinct roles with distinct authority (triage, resolver, approver), execution follows
+declared playbooks rather than prompts, SLAs are measured in business hours, and the daily
+report says what the crew finished and why it escalated the rest. It is for teams piloting
+back-office automation who need every action to be auditable and every irreversible one to
+wait for a person.
 
----
+- In a product: the approval-gate workflow (refunds and credit-limit changes, four-eyes
+  approval, audit trail) has a full UI in
+  [Analyst-in-a-Box](https://github.com/hammasbuilds/analyst-in-a-box) under **Workflows**.
 
-## The three places it can stop safely
+## What it does
 
-```mermaid
-flowchart LR
-    I["intake"] --> T["triage"]
-    T --> P["playbook execution"]
-    P --> G{"reversible?"}
-    G -->|"yes"| E["execute"]
-    G -->|"no"| A["approval gate"]
-    A --> H["escalate to a human"]
-    E --> R["daily report"]
-    H --> R
+- **Triage** with visible rules: category, priority, and abstention below a confidence floor,
+  so a ticket nobody understood goes to a human instead of being guessed.
+- **Playbooks**, not prompts: each category runs an ordered list of operations, so the audit
+  answer is "playbook billing/v1, step 1 ran, step 2 stopped for approval by m.manager".
+- **Risk declared per operation** (`READ`, `WRITE`, `EXTERNAL`, `IRREVERSIBLE`) by whoever
+  wrote it; anything above the autonomous ceiling raises an approval request and moves
+  nothing. `approve()` continues the same ticket, `reject()` escalates it with no action.
+- **Missing information escalates**: a playbook never guesses an account number.
+- **Outages are handed off**: an incident is logged in ITSM and escalated to on-call, never
+  reported as resolved by the crew.
+- **Business-hours SLAs**: weekends, working days, holidays and time waiting on the customer
+  are excluded; burn (`0.9` = act now) is reported before the breach.
+- **Validated status transitions**: illegal moves raise; reopening clears the resolution time.
+- **Daily report**: autonomous resolution rate over tickets the crew finished with,
+  escalations with reasons, tickets awaiting approval, at-risk SLAs, irreversible actions taken.
 
-    style A fill:#f59e0b,color:#fff
-    style H fill:#dc2626,color:#fff
-    style R fill:#2563eb,color:#fff
+| System | Operations |
+|---|---|
+| HRMS | lookup employee `READ`, book leave `WRITE` |
+| ITSM | reset password `WRITE`, open incident `WRITE`, grant access `IRREVERSIBLE` |
+| CRM | lookup customer `READ`, send email `EXTERNAL` |
+| ERP | lookup invoice `READ`, issue refund `IRREVERSIBLE` |
+
+## Sample input / output
+
+`python demo.py`: four tickets through the mock registry the tests use (no model, no network):
+
+```
+INPUT
+   "Cannot log in, password reset needed"
+   "I would like to book annual leave"   facts={'days': 3}
+   "Production down, all users affected"
+   "Refund for invoice 4421 please"   facts={'invoice_id': '4421', 'amount': 4200}
+
+OUTPUT
+   ticket                                         category     priority  status         steps
+   ------------------------------------------------------------------------------------------------
+   Cannot log in, password reset needed           access       NORMAL    RESOLVED       6
+   I would like to book annual leave              hr           NORMAL    RESOLVED       7
+   Production down, all users affected            incident     URGENT    ESCALATED      6
+   Refund for invoice 4421 please                 billing      NORMAL    AWAITING_APPROVAL 7
+
+   HELD FOR APPROVAL   Refund for invoice 4421 please
+      blocked on       erp_issue_refund
+      arguments        {'invoice_id': '4421', 'amount': 4200}
+
+   calls actually made   ['itsm_reset_password', 'hrms_lookup_employee', 'hrms_book_leave', 'itsm_open_incident', 'erp_lookup_invoice']
+   side effects          []
 ```
 
-**Multi-agent in the sense that matters operationally:** distinct roles with **distinct
-authority**, not several models talking to each other. The gate is where the design lives -
-it stops before anything it cannot undo.
+The refund stops at `AWAITING_APPROVAL`: `erp_lookup_invoice` did run, and `side_effects` is
+empty, so no money moved. The outage is logged and handed to on-call.
 
+## Results
 
-| Boundary | What it prevents |
-|---|---|
-| **Triage abstention** | Routing a ticket nobody understood. Below a confidence floor it goes to a human instead of a confident guess. |
-| **Missing information** | Guessing an account number — which is how the *wrong* account gets reset. Escalates instead. |
-| **Approval gate** | Anything `IRREVERSIBLE`. The refund stops; the invoice lookup before it still happened. |
-
-The assertion that matters is not that the system reported a stop:
+- 40 tests, no ERP licence, no model, no network, covering transitions, triage (including word
+  boundaries: `accessory` is not `access`), business hours (after-hours, weekends, holidays,
+  multi-day, burn), autonomy, the approval gate, reporting and the audit trail.
+- The key assertion is on side effects, not on the reported status:
 
 ```python
 def test_an_irreversible_action_stops_for_a_human():
@@ -56,134 +85,27 @@ def test_an_irreversible_action_stops_for_a_human():
     assert c.systems.side_effects == []       # no money moved
 ```
 
-And the gate has to be a gate, not a wall — `approve()` lets the same ticket continue,
-`reject()` escalates it and takes no action. Both are tests.
+- Business hours, from the tests: Friday 16:00 to Monday 10:00 is 2 business hours; Monday
+  09:00 to Wednesday 12:00 is 19.
 
-## Execution runs on playbooks, not prompts
+## Tech stack
 
-```python
-Playbook("billing/v1", "billing", [
-    Step("erp_lookup_invoice", {"invoice_id": "invoice_id"}),
-    Step("erp_issue_refund",   {"invoice_id": "invoice_id", "amount": "amount"}),
-])
-```
+- Python 3.12, zero runtime dependencies (standard library dataclasses, enums, datetime)
+- Mock HRMS / ITSM / CRM / ERP backends exposed as operations with declared risk; a real MCP
+  server can implement the same `Operation` shape
+- pytest, ruff, hatchling, uv, GitHub Actions
 
-When a customer or an auditor asks what happened, *"it followed playbook billing/v1,
-step 1 succeeded, step 2 stopped for approval by m.manager"* is an answer. *"The model
-decided to"* is not.
-
-**Risk is declared per operation by whoever wrote it** — an agent does not get to judge
-whether its own action is reversible. The autonomous ceiling is configuration, and
-raising it visibly removes the gate (also a test).
-
-## SLAs run on business hours
-
-The detail everyone gets wrong. A ticket raised at **5pm Friday** with a 4-hour SLA is
-not breached at 9pm Friday — the desk was closed. Wall-clock measurement produces a
-dashboard full of breaches nobody caused and nobody could have prevented, and a
-dashboard nobody believes is a dashboard nobody reads.
-
-```python
-Friday 16:00 → Monday 10:00  =  2 business hours
-Monday 09:00 → Wednesday 12:00 = 19 business hours
-```
-
-Weekends, configurable working days, and holidays are excluded. So is time spent
-waiting on the customer — an agent cannot be held to a clock it has no way to stop.
-
-**Burn is reported, not just the breach.** `0.9` is when to act; a boolean only tells
-you once it is too late:
-
-```python
-at_risk(burn_threshold=0.8)   # about to fail — actionable
-```
-
-## Status transitions are validated
-
-A crew of agents will attempt every illegal transition eventually — resolving a ticket
-it never picked up, closing one that is waiting on a human. A status field that accepts
-any assignment turns those bugs into **silent data corruption** instead of errors.
-
-Reopening a resolved ticket clears its resolution time, or the SLA would be measured
-against a resolution that no longer stands.
-
-## The report answers the question a manager actually asks
-
-```python
-{
-  "autonomous_resolution_rate": 0.5,     # of tickets the crew *finished with*
-  "escalated": 1,
-  "awaiting_approval": 1,
-  "at_risk": ["a3f9c1"],
-  "irreversible_actions_taken": 1,
-  "escalation_reasons": ["ambiguous: several categories matched equally"],
-}
-```
-
-Resolution rate is measured over tickets the crew finished with — counting one still in
-progress as a failure would make the number meaningless. `escalation_reasons` is there
-because the point of a pilot is to learn *why* the machine could not finish, and a bare
-count teaches nothing.
-
-## Systems
-
-Four mock backends, because the interesting behaviour only appears when an agent must
-cross between them — read from HRMS, write to ITSM, and stop before touching payroll.
-
-| System | Operations |
-|---|---|
-| HRMS | lookup employee `READ`, book leave `WRITE` |
-| ITSM | reset password `WRITE`, grant access `IRREVERSIBLE` |
-| CRM | lookup customer `READ`, send email `EXTERNAL` |
-| ERP | lookup invoice `READ`, issue refund `IRREVERSIBLE` |
-
-## Tests
-
-**45 tests (39 core + 6 for the optional Streamlit demo). No ERP licence, no model, no network.**
-
-```bash
-make test
-```
-
-| Covered | |
-|---|---|
-| Transitions | legal paths, illegal raises, terminal state, reopen clears resolution |
-| Triage | four categories, urgency, word boundaries (`accessory` ≠ `access`), abstention |
-| Business hours | after-hours, weekends, holidays, multi-day, burn before breach |
-| Autonomy | reversible actions taken alone, multi-step playbooks, missing info, backend failure, optional steps |
-| Approval | stops with no side effect, partial progress kept, approve, reject, arguments recorded, ceiling raised |
-| Reporting | resolution rate, irreversible count, escalation reasons, at-risk, empty report |
-| Audit | full trail on the ticket, approver named |
-
-## Limits
-
-- Triage is rule-based, and the rules are visible on purpose — a misrouted ticket is
-  expensive and someone will need to know why it went where it went. An LLM classifier
-  fits behind the same interface where the vocabulary is genuinely open.
-- The systems are mocks. Real MCP servers implement the same `Operation` shape.
-- One SLA policy per crew. Per-tenant policies are a dictionary lookup away.
-- Facts a playbook needs are supplied explicitly rather than extracted from the ticket
-  text — deliberate, so the routing and authority logic can be tested on its own.
-
-## Keywords
-
-multi-agent systems &middot; back office automation &middot; ticket routing &middot; workflow automation &middot; approval gate &middot; human in the loop &middot; escalation &middot; SLA &middot; business hours &middot; playbooks &middot; state machine &middot; AIOps &middot; enterprise automation &middot; zero dependencies &middot; Streamlit
-
-## License
-
-MIT
-
----
-
-## Run it yourself
+## Run it
 
 ```bash
 git clone https://github.com/hammasbuilds/enterprise-ops-crew
 cd enterprise-ops-crew
-
-uv sync --all-groups     # or: pip install -e ".[dev]"
-make test                # 45 tests, no ERP licence, no model, no network
+uv sync --all-groups
+uv run pytest -q           # or: make test
+uv run python demo.py
 ```
+
+As a library:
 
 ```python
 from crew import Crew, Ticket
@@ -191,8 +113,7 @@ from crew.systems import build_default_registry
 
 crew = Crew(systems=build_default_registry())
 
-t = crew.intake(Ticket(subject="Cannot log in, password reset needed",
-                       requester="e-1001"))
+t = crew.intake(Ticket(subject="Cannot log in, password reset needed", requester="e-1001"))
 crew.work(t.id)                       # resolved autonomously
 
 r = crew.intake(Ticket(subject="Refund for invoice 4421", requester="c-77"),
@@ -204,19 +125,11 @@ crew.daily_report()                   # resolution rate, escalations, at-risk SL
 crew.sla_status(r.id)                 # business hours, not wall clock
 ```
 
-### Input / Output
+- Facts a playbook needs (`invoice_id`, `amount`, `days`) are passed to `intake()` explicitly;
+  they are not extracted from the ticket text.
+- Raising `autonomous_ceiling` on the registry removes the gate for that risk level.
+- One SLA policy per crew.
 
-![input](docs/images/input.png)
+## Licence
 
-`python demo.py`
-
-![output](docs/images/output.png)
-
-Three tickets run to `RESOLVED`. The refund stops at `AWAITING_APPROVAL`, and the two
-lines that matter are the last two: `erp_lookup_invoice` **did** run, and `side_effects`
-is empty.
-
-The gate stops the irreversible step, not the whole playbook. A crew that abandoned the
-ticket entirely would also show no money moved, and would be useless.
-
-Same mock ERP/ITSM/HRMS registry the tests use — no model, no network.
+MIT, see [LICENSE](LICENSE).
